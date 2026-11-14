@@ -121,8 +121,29 @@
   }
   const norm = (s) => simp(s).toLowerCase().replace(/[\s'’\-–()（）.,，]/g, '');
 
+  // Places people name by a nickname that no stop or station carries. [zh, en, lat, lng, aliases]
+  // Coordinates checked against OpenStreetMap on 2026-11-14.
+  const LANDMARKS = [
+    ['香港西九龍站（高鐵）', 'Hong Kong West Kowloon Station (High Speed Rail)', 22.30368, 114.16493, '高鐵站 高铁站 西九龍高鐵站 西九龙高铁站 高鐵西九龍站 xrl hsr west kowloon station'],
+    ['香港中文大學', 'The Chinese University of Hong Kong', 22.42018, 114.20791, '中大 cuhk'],
+    ['香港中文大學 鄭裕彤樓', 'CUHK Cheng Yu Tung Building', 22.41226, 114.21079, '中大鄭裕彤樓 鄭裕彤樓 郑裕彤楼 cheng yu tung building cuhk'],
+    ['香港大學', 'The University of Hong Kong', 22.28288, 114.13786, '港大 hku'],
+    ['香港科技大學', 'The Hong Kong University of Science and Technology', 22.33872, 114.26190, '科大 hkust ust'],
+    ['香港理工大學', 'The Hong Kong Polytechnic University', 22.30267, 114.17754, '理大 polyu'],
+    ['香港城市大學', 'City University of Hong Kong', 22.34002, 114.16972, '城大 cityu'],
+    ['香港浸會大學', 'Hong Kong Baptist University', 22.33799, 114.18263, '浸大 hkbu'],
+    ['嶺南大學', 'Lingnan University', 22.41236, 113.98128, '嶺大 lingnan'],
+    ['香港教育大學', 'The Education University of Hong Kong', 22.46932, 114.19470, '教大 eduhk'],
+    ['香港都會大學', 'Hong Kong Metropolitan University', 22.31639, 114.18020, '都大 hkmu'],
+    ['香港國際機場 客運大樓', 'Hong Kong International Airport Terminal 1', 22.31580, 113.93650, '機場 机场 airport hkia'],
+    ['深圳灣口岸', 'Shenzhen Bay Port', 22.50406, 113.94472, '深圳灣 shenzhen bay'],
+    ['蓮塘口岸', 'Heung Yuen Wai Boundary Control Point', 22.55146, 114.15354, '蓮塘 香園圍 heung yuen wai'],
+  ];
   function buildIndex() {
     const net = S.net, idx = [];
+    for (const [zh, en, lat, lng, alias] of LANDMARKS) {
+      idx.push({ type: 'landmark', zh, en, lat, lng, key: norm(zh) + '|' + norm(en) + '|' + alias.split(' ').map(norm).join('|') });
+    }
     for (const code of net.stationCodes) {
       const s = net.mtr.st[code];
       idx.push({ type: 'station', zh: s[2], en: s[3], lat: s[0], lng: s[1], key: norm(s[2]) + '|' + norm(s[3]) + '|' + code.toLowerCase(), sub: null });
@@ -150,15 +171,27 @@
     if (!S.idx) buildIndex();
     const k = norm(q);
     if (!k) return { stations: [], stops: [] };
-    const score = (e) => { const p = e.key.indexOf(k); return p < 0 ? -1 : (e.key.startsWith(k) || e.key.includes('|' + k) ? 0 : 1) * 1000 + e.zh.length; };
-    const st = [], sp = [];
+    const inOrder = (key) => {     // every query character, in order, inside one name: 中大郑裕彤 finds 中文大學鄭裕彤樓
+      for (const part of key.split('|')) {
+        let i = 0;
+        for (const ch of part) if (ch === k[i]) i++;
+        if (i === k.length) return true;
+      }
+      return false;
+    };
+    const score = (e) => {
+      const p = e.key.indexOf(k);
+      if (p >= 0) return (e.key.startsWith(k) || e.key.includes('|' + k) ? 0 : 1) * 1000 + e.zh.length;
+      return k.length >= 2 && /[^\x00-\x7f]/.test(k) && inOrder(e.key) ? 2000 + e.zh.length : -1;
+    };
+    const st = [], sp = [], lm = [];
     for (const e of S.idx) {
       const sc = score(e);
       if (sc < 0) continue;
-      (e.type === 'station' ? st : sp).push([sc, e]);
+      (e.type === 'station' ? st : e.type === 'landmark' ? lm : sp).push([sc, e]);
     }
     const top = (arr, n) => arr.sort((a, b) => a[0] - b[0]).slice(0, n).map((x) => x[1]);
-    return { stations: top(st, 6), stops: top(sp, 24) };
+    return { landmarks: top(lm, 4), stations: top(st, 6), stops: top(sp, 20) };
   }
   async function fetchJson(url, opts, ms) {
     const ctl = new AbortController();
@@ -170,38 +203,40 @@
     } finally { clearTimeout(timer); }
   }
   /** Addresses and buildings: the government Address Lookup Service first, OpenStreetMap as a fallback. */
+  /** Buildings, places and addresses. OpenStreetMap (bounded to Hong Kong) finds named places
+   * such as 鄭裕彤樓 or 西九龍站; the government Address Lookup Service finds street addresses. */
   async function searchOnline(q) {
-    const out = [];
-    try {
-      const j = await fetchJson('https://www.als.gov.hk/lookup?n=6&q=' + encodeURIComponent(q), { headers: { Accept: 'application/json' } });
-      for (const a of j.SuggestedAddress || []) {
-        const p = (a.Address || {}).PremisesAddress || {};
-        const g = p.GeospatialInformation || {};
-        const lat = parseFloat(g.Latitude), lng = parseFloat(g.Longitude);
-        if (!inHK(lat, lng)) continue;
-        const pick = (o) => {
+    const query = q.replace(/高[铁鐵]/g, ' ').trim() || q;
+    const zh = S.lang !== 'en';
+    const osm = fetchJson('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1&namedetails=1&bounded=1&viewbox=113.82,22.58,114.45,22.13' +
+      '&accept-language=' + (zh ? 'zh-HK,zh,en' : 'en') + '&q=' + encodeURIComponent(query)).then((j) => (j || []).map((a) => {
+      const lat = parseFloat(a.lat), lng = parseFloat(a.lon), nd = a.namedetails || {}, ad = a.address || {};
+      const name = (zh ? nd['name:zh-Hant'] || nd['name:zh'] || nd.name : nd['name:en'] || nd.name) || a.name || (a.display_name || '').split(',')[0];
+      const area = [ad.suburb || ad.neighbourhood || ad.quarter || ad.village || ad.town, ad.city_district || ad.city].filter(Boolean)
+        .filter((x, i, arr) => arr.indexOf(x) === i).join(zh ? '，' : ', ');
+      return { kind: 'pt', lat, lng, label: S.lang === 'zh-Hans' ? simp(name) : name, sub: (S.lang === 'zh-Hans' ? simp : (x) => x)([ad.road, area].filter(Boolean).join(zh ? '，' : ', ')), src: 'osm' };
+    }).filter((p) => inHK(p.lat, p.lng) && p.label)).catch(() => []);
+    const als = fetchJson('https://www.als.gov.hk/lookup?n=5&q=' + encodeURIComponent(query), { headers: { Accept: 'application/json', 'Accept-Language': zh ? 'zh-Hant' : 'en' } })
+      .then((j) => (j.SuggestedAddress || []).filter((a) => ((a.ValidationInformation || {}).Score || 0) >= 50).map((a) => {
+        const p = (a.Address || {}).PremisesAddress || {}, g = p.GeospatialInformation || {};
+        const pick = (o, chi) => {
           if (!o) return '';
           const est = (o.ChiEstate || o.EngEstate || {}).EstateName || '';
           const st = o.ChiStreet || o.EngStreet || {};
-          const street = st.StreetName ? (o.ChiStreet ? st.StreetName + (st.BuildingNoFrom ? st.BuildingNoFrom + '號' : '') : (st.BuildingNoFrom ? st.BuildingNoFrom + ' ' : '') + st.StreetName) : '';
-          return [o.BuildingName, est, street].filter(Boolean).join(o.ChiStreet || o.ChiEstate ? ' ' : ', ');
+          const street = st.StreetName ? (chi ? st.StreetName + (st.BuildingNoFrom ? st.BuildingNoFrom + '號' : '') : (st.BuildingNoFrom ? st.BuildingNoFrom + ' ' : '') + st.StreetName) : '';
+          return [o.BuildingName, est, street].filter(Boolean).join(chi ? ' ' : ', ');
         };
-        const zh = pick(p.ChiPremisesAddress), en = pick(p.EngPremisesAddress);
-        if (zh || en) out.push({ kind: 'pt', lat, lng, zh: zh || en, en: en || zh, src: 'als' });
-      }
-    } catch (e) { /* fall through */ }
-    if (!out.length) {
-      const j = await fetchJson('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=hk&accept-language=' +
-        (S.lang === 'en' ? 'en' : 'zh-HK,zh,en') + '&q=' + encodeURIComponent(q));
-      for (const a of j || []) {
-        const lat = parseFloat(a.lat), lng = parseFloat(a.lon);
-        if (!inHK(lat, lng)) continue;
-        const label = (a.display_name || a.name || '').split(',').slice(0, 3).join(', ');
-        out.push({ kind: 'pt', lat, lng, label, src: 'osm' });
-      }
+        const label = (zh && pick(p.ChiPremisesAddress, true)) || titleCase(pick(p.EngPremisesAddress, false));
+        return { kind: 'pt', lat: parseFloat(g.Latitude), lng: parseFloat(g.Longitude), label, sub: '', src: 'als' };
+      }).filter((p) => inHK(p.lat, p.lng) && p.label)).catch(() => []);
+    const [a, b] = await Promise.all([osm, als]);
+    const out = [], seen = [];
+    for (const p of a.concat(b)) {
+      if (seen.some((x) => HKTR.hav([x.lat, x.lng], [p.lat, p.lng]) < 40 && x.label === p.label)) continue;
+      seen.push(p); out.push(p);
     }
-    const seen = new Set();
-    return out.filter((p) => { const k = placeLabel(p) + Math.round(p.lat * 2000); if (seen.has(k)) return false; seen.add(k); return true; });
+    if (!out.length && (a === null || b === null)) throw new Error('offline');
+    return out.slice(0, 10);
   }
 
   // ------------------------------------------------------------------ planning
@@ -448,7 +483,7 @@
     const input = h('input', { type: 'search', id: 'q', placeholder: t('search_ph'), autocomplete: 'off', enterkeyhint: 'search', 'aria-label': t('search_ph') });
     const choose = (p) => { S[which] = p; S.msg = null; closePicker(); render(); };
     const item = (title, sub, onclick, right) => h('li', null, h('div', { class: 'rowx' }, h('button', { class: 'item', onclick }, h('span', { class: 't' }, h('b', null, title), sub ? h('span', null, sub) : null)), right || null));
-    let online = null, onlineState = '';
+    let online = null, timer = null;
     const draw = () => {
       const q = input.value.trim();
       const out = [];
@@ -460,19 +495,23 @@
         out.push(h('ul', { class: 'list' }, list), h('p', { class: 'sub', style: 'padding-top:12px' }, t('search_hint')));
       } else {
         const r = searchLocal(q);
+        if (r.landmarks.length) out.push(h('ul', { class: 'list' }, r.landmarks.map((e) => item(nm(e.zh, e.en), S.lang === 'en' ? e.zh : titleCase(e.en), () => choose({ kind: 'pt', lat: e.lat, lng: e.lng, zh: e.zh, en: e.en })))));
         if (r.stations.length) out.push(h('div', { class: 'grp' }, t('stations')), h('ul', { class: 'list' }, r.stations.map((e) => item(nm(e.zh, e.en) + t('station_suffix'), S.lang === 'en' ? e.zh : titleCase(e.en), () => choose({ kind: 'pt', lat: e.lat, lng: e.lng, zh: e.zh + '站', en: e.en + ' Station' })))));
-        if (r.stops.length) out.push(h('div', { class: 'grp' }, t('stops')), h('ul', { class: 'list' }, r.stops.map((e) => item(nm(e.zh, e.en), routesAtGroup(e), () => choose({ kind: 'pt', lat: e.lat, lng: e.lng, zh: e.zh, en: e.en })))));
         out.push(h('div', { class: 'grp' }, t('addresses')));
-        if (online && online.q === q) {
-          out.push(online.items.length ? h('ul', { class: 'list' }, online.items.map((p) => item(placeLabel(p), null, () => choose(p)))) : h('p', { class: 'sub' }, onlineState || t('no_match')));
-        } else {
-          out.push(h('ul', { class: 'list' }, item('⌕ ' + t('search_online', { q }), null, async () => {
-            online = { q, items: [] }; onlineState = t('searching'); draw();
-            try { online.items = await searchOnline(q); onlineState = ''; } catch (e) { onlineState = t('online_failed'); }
-            draw();
-          })));
+        if (online && online.q === q && !online.pending) {
+          out.push(online.items.length ? h('ul', { class: 'list' }, online.items.map((p) => item(placeLabel(p), p.sub || null, () => choose(p)))) : h('p', { class: 'sub' }, online.failed ? t('online_failed') : t('no_match')));
+        } else out.push(h('p', { class: 'sub' }, t('searching')));
+        if (r.stops.length) out.push(h('div', { class: 'grp' }, t('stops')), h('ul', { class: 'list' }, r.stops.map((e) => item(nm(e.zh, e.en), routesAtGroup(e), () => choose({ kind: 'pt', lat: e.lat, lng: e.lng, zh: e.zh, en: e.en })))));
+        if (!(online && online.q === q)) {
+          clearTimeout(timer);
+          timer = setTimeout(async () => {
+            if (input.value.trim() !== q || q.length < 2) return;
+            online = { q, items: [], pending: true };
+            try { online.items = await searchOnline(q); } catch (e) { online.failed = true; }
+            online.pending = false;
+            if (input.value.trim() === q) draw();
+          }, 550);
         }
-        if (!r.stations.length && !r.stops.length && !(online && online.q === q)) out.unshift(h('p', { class: 'sub', style: 'padding-top:10px' }, t('no_match')));
       }
       body.replaceChildren(...out);
     };
