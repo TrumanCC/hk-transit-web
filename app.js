@@ -601,7 +601,7 @@
       kids.push(h('div', { class: 'actions' }, best.it.kind === 'transit' ? h('button', { class: 'btn slim', id: 'log-best', onclick: () => startTrip(best.it) }, t('start_log')) : null));
       out.push(h('div', { class: 'hero' }, kids));
     }
-    const others = rows.slice(1, 7);
+    const others = rows.slice(1, 10);
     if (others.length || S.plan.taxi) {
       const list = others.map((r) => {
         const diff = r.arrive - best.arrive;

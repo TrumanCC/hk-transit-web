@@ -191,6 +191,10 @@
       const h = (this.cal.headway[this.sid(r, pos)] || {})[PERIOD_NAME[per]];
       return h ? { wait: h[0], p90_gap: h[1], mean: h[2] } : null;
     }
+    calPattern(r, pos, per) {
+      const p = (this.cal.pattern || {})[this.sid(r, pos)];
+      return p ? p[PERIOD_NAME[per]] || null : null;
+    }
     calRide(r, i, j) {
       const a = this.stopId(r, i), src = this.stopOperator(r, a);
       if (!src) return null;
@@ -205,6 +209,17 @@
       for (const [lo, hi, med, p90] of b) if (lo <= lead && lead < hi) return [med, p90];
       return null;
     }
+  }
+
+  const PATTERN_SNAP = 8;     // a timetable pass moves to an observed passing minute at most this far away
+  function snap(t, pattern) {
+    const m = ((t % 60) + 60) % 60;
+    let best = null;
+    for (const p of pattern) {
+      const d = ((((p - m + 30) % 60) + 60) % 60) - 30;
+      if (best === null || Math.abs(d) < Math.abs(best)) best = d;
+    }
+    return best !== null && Math.abs(best) <= PATTERN_SNAP ? t + best : t;
   }
 
   // ------------------------------------------------------------------ labels
@@ -265,27 +280,37 @@
   class Planner {
     constructor(net) { this.net = net; this.lastAll = []; this.lastExcluded = []; }
 
-    nextPass(ri, pos, clock, day) {
-      const net = this.net, off = net.offset(net.R[ri], pos), deps = net.departures(ri, day);
-      const k = bisectLeft(deps, clock - off);
-      if (k >= deps.length) return null;
-      const t = deps[k] + off;
-      return t - clock <= net.C.MAX_WAIT_MIN ? t : null;
+    /** Clock minutes when vehicles reach stop pos: timetable departures plus the estimated time
+     * from the terminus, each moved to the nearest minute-of-hour at which logged vehicles really
+     * passed (infrequent services only, within PATTERN_SNAP minutes). Same as router.py. */
+    passes(ri, pos, day, per) {
+      const key = ri + '|' + pos + '|' + day + '|' + per;
+      if (!this._passCache) this._passCache = new Map();
+      let out = this._passCache.get(key);
+      if (out) return out;
+      const net = this.net, r = net.R[ri], off = net.offset(r, pos);
+      out = net.departures(ri, day).map((d) => d + off);
+      const pat = per === undefined || per === null ? null : net.calPattern(r, pos, per);
+      if (pat) out = out.map((t) => snap(t, pat)).sort((a, b) => a - b);
+      this._passCache.set(key, out);
+      return out;
     }
 
-    _gaps(ri, pos, clock, day) {
-      const net = this.net, off = net.offset(net.R[ri], pos);
-      const passes = [];
-      for (const d of net.departures(ri, day)) {
-        const t = d + off;
-        if (t >= clock - 60 && t <= clock + 150) passes.push(t);
-      }
-      return passes;
+    nextPass(ri, pos, clock, day, per) {
+      const ps = this.passes(ri, pos, day, per);
+      const k = bisectLeft(ps, clock);
+      if (k >= ps.length) return null;
+      const t = ps[k];
+      return t - clock <= this.net.C.MAX_WAIT_MIN ? t : null;
+    }
+
+    _gaps(ri, pos, clock, day, per) {
+      return this.passes(ri, pos, day, per).filter((t) => t >= clock - 60 && t <= clock + 150);
     }
 
     /** Half the typical gap between vehicles at this stop around `clock`. */
-    expectedWait(ri, pos, clock, day) {
-      const passes = this._gaps(ri, pos, clock, day);
+    expectedWait(ri, pos, clock, day, per) {
+      const passes = this._gaps(ri, pos, clock, day, per);
       if (!passes.length) return null;
       if (passes.length === 1) return passes[0] >= clock ? Math.max(passes[0] - clock, 0) : null;
       const gaps = [];
@@ -294,8 +319,8 @@
       return gaps[gaps.length >> 1] / 2;
     }
 
-    gap(ri, pos, clock, day) {
-      const passes = this._gaps(ri, pos, clock, day);
+    gap(ri, pos, clock, day, per) {
+      const passes = this._gaps(ri, pos, clock, day, per);
       if (passes.length < 2) return null;
       const gaps = [];
       for (let i = 1; i < passes.length; i++) gaps.push(passes[i] - passes[i - 1]);
@@ -307,9 +332,9 @@
      * kinds: gmb_terminus (leaves when full), gmb_mid (may pass full), fixed, sparse. */
     waitModel(ri, pos, clock, day, per) {
       const net = this.net, C = net.C, r = net.R[ri];
-      const p = this.nextPass(ri, pos, clock, day);
+      const p = this.nextPass(ri, pos, clock, day, per);
       if (p === null) return null;
-      const h = this.gap(ri, pos, clock, day);
+      const h = this.gap(ri, pos, clock, day, per);
       const n = Math.max(r.s.length - 1, 1);
       const load = Math.min(1.0, 2 * pos / n);
       if (h === null) {
