@@ -226,7 +226,8 @@
           const street = st.StreetName ? (chi ? st.StreetName + (st.BuildingNoFrom ? st.BuildingNoFrom + '號' : '') : (st.BuildingNoFrom ? st.BuildingNoFrom + ' ' : '') + st.StreetName) : '';
           return [o.BuildingName, est, street].filter(Boolean).join(chi ? ' ' : ', ');
         };
-        const label = (zh && pick(p.ChiPremisesAddress, true)) || titleCase(pick(p.EngPremisesAddress, false));
+        const chi = zh && pick(p.ChiPremisesAddress, true);
+        const label = chi ? (S.lang === 'zh-Hans' ? simp(chi) : chi) : titleCase(pick(p.EngPremisesAddress, false));
         return { kind: 'pt', lat: parseFloat(g.Latitude), lng: parseFloat(g.Longitude), label, sub: '', src: 'als' };
       }).filter((p) => inHK(p.lat, p.lng) && p.label)).catch(() => []);
     const [a, b] = await Promise.all([osm, als]);
