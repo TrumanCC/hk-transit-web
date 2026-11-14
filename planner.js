@@ -134,7 +134,8 @@
           let e = hhmm(val[0]);
           if (e <= s) e += 1440;
           const step = Math.max(parseInt(val[1], 10) / 60, 1);
-          for (let t = s; t < e; t += step) set.add(t);
+          // the end time is itself a departure (W3 19:00-23:30 every 30 min runs a 23:30 trip)
+          for (let t = s; t <= e + 1e-6; t += step) set.add(t);
         }
       }
       out = Array.from(set).sort((a, b) => a - b);
