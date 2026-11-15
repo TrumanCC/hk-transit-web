@@ -4,6 +4,9 @@
 (function () {
   'use strict';
   const CONFIG = window.HKTR_CONFIG || { version: 'dev', feedback: {} };
+  /* Features that keep a person's own places and trips on the phone and show them again.
+   * Off on the public site, so nobody sees where the previous user of a phone went. */
+  const FEAT = Object.assign({ records: false, savedPlaces: false, recent: false }, CONFIG.features || {});
   const HK_BOUNDS = [22.13, 22.58, 113.82, 114.45];
   const LINE_COLOR = { TWL: '#E2231A', KTL: '#00AF41', ISL: '#0075C2', TKL: '#7E3C93', TCL: '#F3982D', TML: '#9C2E00',
     EAL: '#5EB7E8', SIL: '#CBD300', AEL: '#00888E', DRL: '#EB6EA5' };
@@ -36,7 +39,7 @@
   }
   const store = {
     get(k, d) { try { const v = localStorage.getItem('hktr.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
-    set(k, v) { try { localStorage.setItem('hktr.' + k, JSON.stringify(v)); } catch (e) { /* private mode: carry on without */ } },
+    set(k, v) { try { if (v === null) localStorage.removeItem('hktr.' + k); else localStorage.setItem('hktr.' + k, JSON.stringify(v)); } catch (e) { /* private mode: carry on without */ } },
   };
   function t(key, vars) {
     const L = window.I18N || {};
@@ -291,6 +294,7 @@
     if (S.when.mode === 'now') refreshLive();
   }
   function rememberTrip() {
+    if (!FEAT.recent) return;
     store.set('last', { from: S.from, to: S.to });
     const key = (x) => placeLabel(x.from) + '>' + placeLabel(x.to);
     const cur = { from: S.from, to: S.to };
@@ -401,7 +405,7 @@
 
   // ------------------------------------------------------------------ views
   function setView(v) { S.view = v; if (location.hash.slice(1) !== (v === 'home' ? '' : v)) history.pushState(null, '', v === 'home' ? location.pathname + location.search : '#' + v); render(); window.scrollTo(0, 0); }
-  window.addEventListener('popstate', () => { const v = location.hash.slice(1) || 'home'; S.view = (v === 'go' && !S.plan) || (v === 'trip' && !S.trip) ? 'home' : v; closePicker(); render(); });
+  window.addEventListener('popstate', () => { const v = location.hash.slice(1) || 'home'; S.view = (v === 'go' && !S.plan) || (v === 'trip' && !S.trip) || (v === 'log' && !FEAT.records) ? 'home' : v; closePicker(); render(); });
   function syncUrl() {
     const enc = (p) => (p.kind === 'gps' ? 'gps' : p.lat.toFixed(5) + ',' + p.lng.toFixed(5) + ',' + encodeURIComponent(placeLabel(p)));
     try { history.replaceState(null, '', location.pathname + '?from=' + enc(S.from) + '&to=' + enc(S.to) + '#go'); } catch (e) { /* file:// */ }
@@ -412,7 +416,7 @@
     $('#bar').replaceChildren(
       h('button', { class: 'brand', onclick: () => setView('home') }, t('app')),
       h('span', { class: 'grow' }),
-      link('log', t('records')), link('about', t('about')));
+      FEAT.records ? link('log', t('records')) : null, link('about', t('about')));
     document.documentElement.lang = S.lang;
     document.title = t('app') + (S.lang === 'en' ? ' | Hong Kong trips' : '｜' + (S.lang === 'zh-Hans' ? '香港出门路线' : '香港出門路線'));
   }
@@ -451,12 +455,12 @@
       whenRow,
       S.msg ? h('div', { class: 'notice err', role: 'alert' }, S.msg) : null,
       h('button', { class: 'btn', id: 'find', disabled: S.busy, onclick: () => runPlan(false) }, S.busy ? t('computing') : t('find'))));
-    const savable = [S.from, S.to].filter((p) => p && p.kind !== 'gps' && !store.get('places', []).some((x) => samePlace(Object.assign({ kind: 'pt' }, x), Object.assign({}, p, { kind: 'pt' }))));
+    const savable = !FEAT.savedPlaces ? [] : [S.from, S.to].filter((p) => p && p.kind !== 'gps' && !store.get('places', []).some((x) => samePlace(Object.assign({ kind: 'pt' }, x), Object.assign({}, p, { kind: 'pt' }))));
     if (savable.length) {
       out.push(h('div', { class: 'chips' }, savable.map((p) => h('button', { class: 'chip', onclick: () => savePlaceForm(p) }, '☆ ' + t('save_place') + '：' + placeLabel(p)))));
     }
     const recent = store.get('recent', []);
-    out.push(h('section', { class: 'card' }, h('h2', { style: 'margin:0 0 4px' }, t('recent')),
+    if (FEAT.recent) out.push(h('section', { class: 'card' }, h('h2', { style: 'margin:0 0 4px' }, t('recent')),
       recent.length ? h('ul', { class: 'list' }, recent.map((x) => h('li', null, h('button', { class: 'item', onclick: () => { S.from = x.from; S.to = x.to; S.when.mode = 'now'; runPlan(false); } },
         h('span', { class: 't' }, h('b', null, placeLabel(x.from) + ' → ' + placeLabel(x.to)))))))
         : h('p', { class: 'sub' }, t('no_recent'))));
@@ -490,7 +494,7 @@
       const out = [];
       if (!q) {
         const list = [item('◎ ' + t('my_location'), null, () => choose({ kind: 'gps' }))];
-        const saved = store.get('places', []);
+        const saved = FEAT.savedPlaces ? store.get('places', []) : [];
         saved.forEach((x, i) => list.push(item('★ ' + x.label, null, () => choose({ kind: 'pt', lat: x.lat, lng: x.lng, label: x.label }),
           h('button', { class: 'x', 'aria-label': t('remove'), onclick: () => { saved.splice(i, 1); store.set('places', saved); draw(); } }, '✕'))));
         out.push(h('ul', { class: 'list' }, list), h('p', { class: 'sub', style: 'padding-top:12px' }, t('search_hint')));
@@ -737,14 +741,34 @@
   }
   async function finishTrip() {
     const rec = tripRecord(S.trip);
-    const all = store.get('records', []);
     let synced = false;
     try { synced = await upload(rec); } catch (e) { synced = false; }
-    all.unshift({ rec, synced });
-    store.set('records', all.slice(0, 200));
+    if (FEAT.records) {
+      const all = store.get('records', []);
+      all.unshift({ rec, synced });
+      store.set('records', all.slice(0, 200));
+    } else if (!synced) {      // not shown anywhere; sent next time the page opens
+      store.set('outbox', store.get('outbox', []).concat([rec]).slice(-50));
+    }
     S.trip = null; store.set('trip', null);
-    toast(synced ? t('submitted') : t('saved_local'));
-    setView('log');
+    toast(synced ? t('submitted') : FEAT.records ? t('saved_local') : t('send_later'));
+    setView(FEAT.records ? 'log' : S.plan ? 'go' : 'home');
+  }
+  /** With the features off: send anything left in the outbox, and clear what earlier
+   * versions kept on the phone (records, saved places, recent trips). */
+  async function tidyStorage() {
+    if (!FEAT.records) {
+      const old = store.get('records', []).filter((x) => !x.synced).map((x) => x.rec);
+      if (old.length) store.set('outbox', store.get('outbox', []).concat(old).slice(-50));
+      store.set('records', null);
+    }
+    if (!FEAT.savedPlaces) store.set('places', null);
+    if (!FEAT.recent) { store.set('recent', null); store.set('last', null); }
+    const box = store.get('outbox', []);
+    if (!box.length) return;
+    const left = [];
+    for (const rec of box) { try { if (!(await upload(rec))) left.push(rec); } catch (e) { left.push(rec); } }
+    store.set('outbox', left.length ? left : null);
   }
 
   // ------------------------------------------------------------------ records and about
@@ -817,11 +841,12 @@
       $('#app').replaceChildren(h('div', { class: 'notice err', role: 'alert' }, t('load_failed')));
       return;
     }
-    const last = store.get('last', null);
+    const last = FEAT.recent ? store.get('last', null) : null;
+    tidyStorage();
     const from = parsePlace(q.get('from')), to = parsePlace(q.get('to'));
     if (from && to) { S.from = from; S.to = to; } else if (last) { S.from = last.from || S.from; S.to = last.to || null; }
     const v = location.hash.slice(1);
-    S.view = v === 'log' || v === 'about' ? v : v === 'trip' && S.trip ? 'trip' : 'home';
+    S.view = (v === 'log' && FEAT.records) || v === 'about' ? v : v === 'trip' && S.trip ? 'trip' : 'home';
     render();
     if (from && to && S.view === 'home') runPlan(false);
   }
