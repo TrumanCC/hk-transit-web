@@ -416,7 +416,7 @@
     $('#bar').replaceChildren(
       h('button', { class: 'brand', onclick: () => setView('home') }, t('app')),
       h('span', { class: 'grow' }),
-      FEAT.records ? link('log', t('records')) : null, link('about', t('about')));
+      ...(FEAT.records ? [link('log', t('records'))] : []), link('about', t('about')));
     document.documentElement.lang = S.lang;
     document.title = t('app') + (S.lang === 'en' ? ' | Hong Kong trips' : '｜' + (S.lang === 'zh-Hans' ? '香港出门路线' : '香港出門路線'));
   }
