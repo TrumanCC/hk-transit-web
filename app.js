@@ -362,13 +362,40 @@
       default: return t('how_timetable', { n: n0(due) });
     }
   }
+  /** Where the k-th step of an itinerary starts and ends, as [lat, lng] (null = the trip's
+   * own start or end). A walk step carries only its length, so its ends are taken from the
+   * steps around it: the stop or station before it, and the one after it. */
+  function stepEnd(st, atStart) {
+    const net = S.net;
+    if (!st) return null;
+    if (st.type === 'ride') return net.pos(net.R[st.ri].s[atStart ? st.i : st.j]);
+    if (st.type === 'rail') { const x = net.mtr.st[atStart ? st.a : st.b]; return x ? [x[0], x[1]] : null; }
+    return null;
+  }
+  /** Google Maps walking directions for the k-th step, or null. */
+  function walkUrl(it, k) {
+    const P = S.plan;
+    if (!P) return null;
+    const a = k > 0 ? stepEnd(it.steps[k - 1], false) : P.origin;
+    const b = k < it.steps.length - 1 ? stepEnd(it.steps[k + 1], true) : P.dest;
+    if (!a || !b) return null;
+    const ll = (x) => x[0].toFixed(6) + ',' + x[1].toFixed(6);
+    const q = new URLSearchParams({ api: '1', destination: ll(b), travelmode: 'walking' });
+    // from "my location": let Google start from where the phone is, so it can guide live
+    if (!(k === 0 && S.from && S.from.kind === 'gps' && S.when.mode === 'now')) q.set('origin', ll(a));
+    q.set('hl', S.lang === 'en' ? 'en' : S.lang === 'zh-Hant' ? 'zh-HK' : 'zh-CN');
+    return 'https://www.google.com/maps/dir/?' + q.toString();
+  }
+  function mapLink(url) {
+    return url ? h('a', { class: 'maplink', href: url, target: '_blank', rel: 'noopener' }, t('walk_map')) : null;
+  }
   function stepItems(it) {
     const net = S.net, C = net.C;
-    return it.steps.map((s) => {
+    return it.steps.map((s, k) => {
       if (s.type === 'walk') {
         return h('li', null, s.crossings >= 0.5
           ? t('st_walk_x', { m: s.metres, n: n0(s.minutes), c: n1(s.crossings), r: n1(s.red) })
-          : t('st_walk', { m: s.metres, n: n0(s.minutes) }));
+          : t('st_walk', { m: s.metres, n: n0(s.minutes) }), mapLink(walkUrl(it, k)));
       }
       if (s.type === 'ride') {
         const r = net.R[s.ri];
@@ -593,7 +620,8 @@
       kids.push(h('div', { class: 'take' }, best.it.kind === 'walk' ? null : t('now_take'), nameEl(best.it, null)));
       if (f.kind) {
         const where = f.kind === 'mtr' ? t('walk_to_station', { stop: stationName(f.station) + t('station_suffix'), n: n0(f.walk) }) : t('walk_to', { stop: stopName(S.net.R[f.ri].s[f.pos]), n: n0(f.walk) });
-        kids.push(h('div', null, where), h('div', null, howText(best.sim, N.at)));
+        const w0 = best.it.steps && best.it.steps[0] && best.it.steps[0].type === 'walk' ? walkUrl(best.it, 0) : null;
+        kids.push(h('div', null, where, w0 ? ' ' : null, mapLink(w0)), h('div', null, howText(best.sim, N.at)));
       } else kids.push(h('div', null, howText(best.sim, N.at)));
       kids.push(h('div', { class: 'arrive' }, h('span', { class: 'big', id: 'eta' }, clock(best.arrive)), h('span', { class: 'muted' }, t('worst_at', { t: clock(best.worst) })),
         N.live && fixedTime ? h('span', { class: 'pill' + (f.wait_now < 1.5 ? ' hot' : '') }, f.wait_now < 1.5 ? t('leave_now') : t('leave_in', { n: Math.floor(f.wait_now) })) : null));

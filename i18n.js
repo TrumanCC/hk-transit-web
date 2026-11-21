@@ -42,6 +42,7 @@ window.I18N = {
     beaten_by: '被「{name}」取代（{t} 分，${f}）', show_more: '显示更多', details: '详细步骤', hide: '收起',
     start_log: '记录这趟行程', taxi: '的士', walk_only: '全程步行', mtr: '港铁',
     // steps
+    walk_map: '看步行路线 ↗',
     st_walk: '步行约 {m} 米（{n} 分钟）', st_walk_x: '步行约 {m} 米（{n} 分钟，约过 {c} 个灯位、等灯 {r} 分）',
     st_ride: '{t} 搭 {label}（往{dest}），在「{a}」上车，坐 {k} 站到「{b}」',
     st_ride_d: '候车 {w} 分（{how}），行车 {run} 分，红绿灯约 {s} 个等 {r} 分，停站 {dw} 分，车费 ${f}',
@@ -137,6 +138,7 @@ window.I18N = {
     excluded_title: 'Excluded options ({n})', excluded_sub: 'For each, another option is no worse on average time, worst time, fare, changes and walking, and better on at least one.',
     beaten_by: 'Beaten by “{name}” ({t} min, ${f})', show_more: 'Show more', details: 'Steps', hide: 'Hide',
     start_log: 'Log this trip', taxi: 'Taxi', walk_only: 'Walk all the way', mtr: 'MTR',
+    walk_map: 'Walking directions ↗',
     st_walk: 'Walk about {m} m ({n} min)', st_walk_x: 'Walk about {m} m ({n} min, about {c} signal crossings, {r} min waiting)',
     st_ride: '{t} {label} (to {dest}): board at “{a}”, ride {k} stops to “{b}”',
     st_ride_d: 'Wait {w} min ({how}), running {run} min, about {s} signals costing {r} min, stops {dw} min, fare ${f}',

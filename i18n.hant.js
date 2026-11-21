@@ -97,6 +97,7 @@ window.I18N['zh-Hant'] = {
  "taxi": "的士",
  "walk_only": "全程步行",
  "mtr": "港鐵",
+ "walk_map": "看步行路線 ↗",
  "st_walk": "步行約 {m} 米（{n} 分鐘）",
  "st_walk_x": "步行約 {m} 米（{n} 分鐘，約過 {c} 個燈位、等燈 {r} 分）",
  "st_ride": "{t} 搭 {label}（往{dest}），在「{a}」上車，坐 {k} 站到「{b}」",
